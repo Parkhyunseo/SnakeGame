@@ -1,5 +1,6 @@
 # Using
 
-'''bash
-python game.py
-'''
+```console
+foo@bar:~$ python game.py
+foo
+```
