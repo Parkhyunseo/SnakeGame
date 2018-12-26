@@ -1,6 +1,5 @@
 # Using
 
 ```console
-foo@bar:~$ python game.py
-foo
+user:~$ python game.py
 ```
