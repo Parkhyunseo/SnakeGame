@@ -10,18 +10,9 @@ on:
 jobs:
   pr_agent:
     runs-on: [self-hosted, Windows]
-    # PR 코멘트일 때: PR에 달린 코멘트 + 사람이 쓴 것 + 우리가 지원하는 슬래시 명령만 실행
-    if: >
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.user.type != 'Bot' &&
-       (startsWith(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '/describe') ||
-        startsWith(github.event.comment.body, '/improve') ||
-        startsWith(github.event.comment.body, '/ask') ||
-        startsWith(github.event.comment.body, '/update_changelog') ||
-        startsWith(github.event.comment.body, '/help_docs')))
+    # PR 이벤트 or PR에 달린 코멘트면 실행 (명령어 여부는 내부에서 판단)
+    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+
     defaults:
       run:
         shell: powershell
@@ -33,41 +24,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 0) 이벤트별 PR URL/번호 + 실행 커맨드/인자 파싱
-      - name: Set PR context & command
+      # 0) PR 컨텍스트/커맨드 파싱 (코멘드가 아니면 'skip'으로 설정)
+      - name: Set PR context & parse slash command
         env:
-          REPO: ${{ github.repository }}
-          EVT: ${{ github.event_name }}
-          PR_NUM_PR: ${{ github.event.pull_request.number }}
-          PR_NUM_CM: ${{ github.event.issue.number }}
-          CMDBODY: ${{ github.event.comment.body }}
+          REPO:        ${{ github.repository }}
+          EVT:         ${{ github.event_name }}
+          PR_NUM_PR:   ${{ github.event.pull_request.number }}
+          PR_NUM_CM:   ${{ github.event.issue.number }}
+          CMDBODY:     ${{ github.event.comment.body }}
         run: |
-          # PR 번호/URL
+          # PR 번호/URL 구성
           $prNum = if ($Env:EVT -eq 'pull_request') { $Env:PR_NUM_PR } else { $Env:PR_NUM_CM }
           if (-not $prNum) { throw "PR number not found for event $($Env:EVT)" }
           "PR_NUMBER=$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "PR_URL=https://github.com/$($Env:REPO)/pull/$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          # 커맨드/인자 파싱 (코멘트 이벤트인 경우에만)
-          $cmd = 'review'
+          # 기본값: PR 이벤트면 review, 코멘트 이벤트면 스킵(명령만 통과)
+          $cmd = if ($Env:EVT -eq 'pull_request') { 'review' } else { 'skip' }
           $arg = $null
-          if ($Env:EVT -eq 'issue_comment') {
-            $body = ($Env:CMDBODY ?? '').Trim()
 
-            # 맨 앞 슬래시 커맨드와 나머지를 분리
+          if ($Env:EVT -eq 'issue_comment') {
+            $body = ($Env:CMDBODY ?? '') -replace "`r","" -replace "`n"," "
+            $body = $body.Trim()
+
             if ($body -match '^\s*/([a-zA-Z_]+)\s*(.*)$') {
               $cmdRaw = $matches[1].ToLower()
               $rest   = $matches[2].Trim()
 
-              # 지원 커맨드만 허용
               switch ($cmdRaw) {
-                'review'            { $cmd = 'review' }
-                'describe'          { $cmd = 'describe' }
-                'improve'           { $cmd = 'improve' }              # /improve  (코드 개선) :contentReference[oaicite:1]{index=1}
-                'ask'               { $cmd = 'ask';         $arg = $rest.Trim('"') }  # /ask "질문" :contentReference[oaicite:2]{index=2}
-                'update_changelog'  { $cmd = 'update_changelog' }      # /update_changelog (CHANGELOG 자동 갱신) :contentReference[oaicite:3]{index=3}
-                'help_docs'         { $cmd = 'help_docs';   $arg = $rest.Trim('"') }  # /help_docs "질문" (레포 /docs 기본) :contentReference[oaicite:4]{index=4}
-                default             { $cmd = 'review' }
+                'review'           { $cmd = 'review' }
+                'describe'         { $cmd = 'describe' }
+                'description'      { $cmd = 'describe' }        # ← 별칭 지원
+                'improve'          { $cmd = 'improve' }         # 코드 개선
+                'ask'              { $cmd = 'ask';            $arg = $rest.Trim('"') }
+                'update_changelog' { $cmd = 'update_changelog' }
+                'help_docs'        { $cmd = 'help_docs';      $arg = $rest.Trim('"') }
+                default            { $cmd = 'skip' }
               }
             }
           }
@@ -75,7 +67,11 @@ jobs:
           "PR_AGENT_COMMAND=$cmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           if ($arg) { "PR_AGENT_ARG=$arg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
 
-      # 1) Ollama(로컬) 확인 + EXAONE 3.5 모델 준비
+          Write-Host "Resolved PR_URL=$($env:PR_URL)"
+          Write-Host "Resolved PR_AGENT_COMMAND=$cmd"
+          if ($arg) { Write-Host "Resolved PR_AGENT_ARG=$arg" }
+
+      # 1) Ollama 확인 + EXAONE 준비 (이미 있으면 빠르게 통과)
       - name: Ensure Ollama (reviewOllama) is running
         run: |
           $running = docker ps --format '{{.Names}}' | Select-String -Pattern '^reviewOllama$'
@@ -91,7 +87,7 @@ jobs:
               docker start reviewOllama | Out-Null
             }
           }
-          Invoke-RestMethod http://localhost:11434/api/tags -Method GET | Out-Null
+          Invoke-RestMethod http://localhost:11434/api/tags -Method GET | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Pull EXAONE 3.5 model (first time only)
         run: |
@@ -105,15 +101,24 @@ jobs:
             } catch {}
             Start-Sleep 5
           }
-          if (-not $ok) { throw "exaone3.5:7.8b 모델이 5분 내 준비되지 않았습니다." }
+          if (-not $ok) { throw "exaone3.5:7.8b 모델 준비 실패" }
 
-      # 2) PR-Agent 실행 (review/describe/improve/ask/update_changelog/help_docs 공용)
+      # 2) (선택) 컨테이너->호스트 헬스 체크
+      - name: Smoke test (container -> host.docker.internal)
+        run: docker run --rm curlimages/curl -fsS http://host.docker.internal:11434/api/tags
+
+      # 3) 명령이 없으면 스킵
+      - name: Skip if not a supported slash command
+        if: env.PR_AGENT_COMMAND == 'skip'
+        run: echo "No supported slash command. Skipping."
+
+      # 4) PR-Agent 실행 (review/describe/improve/ask/update_changelog/help_docs 공용)
       - name: Run PR-Agent (${{ env.PR_AGENT_COMMAND }})
+        if: env.PR_AGENT_COMMAND != 'skip'
         env:
           # 한국어 고정
           CONFIG__RESPONSE_LANGUAGE: ko-KR
           PR_REVIEWER__LANGUAGE: ko
-
           # Ollama(호스트) + 모델/토큰/폴백
           OLLAMA__API_BASE: http://host.docker.internal:11434
           CONFIG__ACTIVE_PROVIDER: ollama
@@ -121,9 +126,10 @@ jobs:
           CONFIG__CUSTOM_MODEL_MAX_TOKENS: 8000
           CONFIG__FALLBACK_MODELS: "[]"
           CONFIG__LOG_LEVEL: DEBUG
-
           # GitHub 권한
           GITHUB__USER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # (옵션) help_docs 기본 경로 바꾸려면 주석 해제
+          # PR_HELP_DOCS__DOCS_PATH: docs
         run: |
           $args = @("run","--rm")
           $envs = @(
@@ -139,8 +145,8 @@ jobs:
           )
           foreach ($e in $envs) { $args += @("-e",$e) }
 
-          # docker run codiumai/pr-agent:latest --pr_url <URL> <command> [arg?]
           $args += @("codiumai/pr-agent:latest","--pr_url","$Env:PR_URL","$Env:PR_AGENT_COMMAND")
-          if ($Env:PR_AGENT_ARG) { $args += @("$Env:PR_AGENT_ARG") }  # /ask, /help_docs 질문 전달
+          if ($Env:PR_AGENT_ARG) { $args += @("$Env:PR_AGENT_ARG") }
 
+          Write-Host ">>> docker @args"
           & docker @args
