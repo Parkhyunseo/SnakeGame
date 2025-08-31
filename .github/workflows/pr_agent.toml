@@ -1,0 +1,4 @@
+[pr_reviewer]
+language = "ko"
+review_inline_comments = true
+max_review_comments = 30
