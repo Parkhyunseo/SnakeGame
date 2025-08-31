@@ -1,11 +1,11 @@
-name: PR-Agent (self-hosted + EXAONE, Windows)
+name: PR-Agent (Windows self-hosted + Ollama EXAONE)
 
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
-    paths: ['**/*.py']
+    paths: ['**/*.py']           # C#만 리뷰
   issue_comment:
-    types: [created, edited]
+    types: [created, edited]     # /review, /describe 명령도 받고 싶으면 활성화
 
 jobs:
   review:
@@ -13,6 +13,7 @@ jobs:
     defaults:
       run:
         shell: powershell
+
     permissions:
       issues: write
       pull-requests: write
@@ -21,15 +22,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sanity check Ollama
+      # 1) Docker 네트워크 준비 (ollama <-> pr-agent 서로 이름으로 통신)
+      - name: Prepare Docker network
         run: |
-          Invoke-RestMethod -Uri http://localhost:11434/api/tags -Method GET | ConvertTo-Json -Depth 5
-      
-      - name: Ensure EXAONE 3.5 model is present
+          if (-not (docker network ls --format '{{.Name}}' | Select-String -Pattern '^llmnet$')) {
+            docker network create llmnet | Out-Null
+          }
+
+      # 2) Ollama 컨테이너 실행 (없으면 생성/있으면 기동)
+      - name: Ensure Ollama is running
+        run: |
+          $running = docker ps --format '{{.Names}}' | Select-String -Pattern '^reviewOllama$'
+          if (-not $running) {
+            $exists = docker ps -a --format '{{.Names}}' | Select-String -Pattern '^reviewOllama$'
+            if (-not $exists) {
+              docker run -d --name reviewOllama --restart unless-stopped `
+                --network llmnet -p 11434:11434 `
+                -e OLLAMA_CONTEXT_LENGTH=8192 `
+                -v ollama_models:/root/.ollama `
+                ollama/ollama:latest | Out-Null
+            } else {
+              docker start reviewOllama | Out-Null
+              docker network connect llmnet reviewOllama 2>$null
+            }
+          }
+
+      # 3) EXAONE 3.5 모델 풀 + 준비 대기
+      - name: Pull EXAONE 3.5 model
         run: |
           Invoke-RestMethod -Uri http://localhost:11434/api/pull `
             -Method POST -ContentType 'application/json' `
-            -Body '{"name":"exaone3.5:7.8b"}'
+            -Body '{"name":"exaone3.5:7.8b"}' | Out-Null
+
           $ok = $false
           for ($i=0; $i -lt 60; $i++) {
             try {
@@ -40,12 +64,27 @@ jobs:
           }
           if (-not $ok) { throw "exaone3.5:7.8b 모델이 5분 내 준비되지 않았습니다." }
 
-
-      - name: Run PR-Agent
-        uses: qodo-ai/pr-agent@main
+      # 4) PR-Agent 컨테이너를 docker run으로 직접 실행 (리뷰)
+      - name: PR-Agent review
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          config.model: "ollama/exaone3.5:7.8b"
-          OLLAMA.API_BASE: "http://localhost:11434"
-          github_action_config.auto_review: "true"
-          github_action_config.auto_describe: "true"
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          docker run --rm --network llmnet `
+            -e OPENAI__KEY=dummy `
+            -e OPENAI__API_BASE=http://ollama:11434/v1 `
+            -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
+            -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
+            codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
+
+      # 5) (선택) PR 본문 요약도 생성하고 싶다면
+      - name: PR-Agent describe (optional)
+        if: success()
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          docker run --rm --network llmnet `
+            -e OPENAI__KEY=dummy `
+            -e OPENAI__API_BASE=http://ollama:11434/v1 `
+            -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
+            -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
+            codiumai/pr-agent:latest --pr_url "$Env:PR_URL" describe
