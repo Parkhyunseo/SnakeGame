@@ -10,6 +10,13 @@ on:
 jobs:
   review:
     runs-on: [self-hosted, Windows]
+    if: >
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       (startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/describe')))
+    
     defaults:
       run:
         shell: powershell
@@ -20,6 +27,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # 0) 이벤트별 PR 번호/URL + 실행 커맨드 설정
+      - name: Set PR context & command
+        env:
+          REPO: ${{ github.repository }}
+          EVT: ${{ github.event_name }}
+          PR_NUM_PR: ${{ github.event.pull_request.number }}
+          PR_NUM_CM: ${{ github.event.issue.number }}
+          CMDBODY: ${{ github.event.comment.body }}
+        run: |
+          # PR 번호
+          $prNum = if ($Env:EVT -eq 'pull_request') { $Env:PR_NUM_PR } else { $Env:PR_NUM_CM }
+          if (-not $prNum) { throw "PR number not found for event $($Env:EVT)" }
+          "PR_NUMBER=$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PR_URL=https://github.com/$($Env:REPO)/pull/$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # 커맨드: 코멘트이면 본문으로 결정, 아니면 기본 review
+          $cmd = 'review'
+          if ($Env:EVT -eq 'issue_comment') {
+            if ($Env:CMDBODY -match '^\s*/describe\b') { $cmd = 'describe' }
+            else { $cmd = 'review' }
+          }
+          "PR_AGENT_COMMAND=$cmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # 1) Ollama 컨테이너 기동(컨테이너명이 reviewOllama인 상황 반영)
       - name: Ensure Ollama (reviewOllama) is running
@@ -60,27 +90,35 @@ jobs:
         run: |
           docker run --rm curlimages/curl -fsS http://host.docker.internal:11434/api/tags
 
-      # 4) PR-Agent 리뷰 실행 (OpenAI 호환 모드로 Ollama 호출)
-      - name: PR-Agent review
+      # 2) PR-Agent 실행 (모든 이벤트 공용)
+      - name: Run PR-Agent (${{ env.PR_AGENT_COMMAND }})
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          # 언어 고정 (본문/인라인 모두)
+          CONFIG__RESPONSE_LANGUAGE: ko-KR
+          PR_REVIEWER__LANGUAGE: ko
+          # Ollama(호스트) 연결 + 모델/토큰/폴백
+          OLLAMA__API_BASE: http://host.docker.internal:11434
+          CONFIG__ACTIVE_PROVIDER: ollama
+          CONFIG__MODEL: ollama/exaone3.5:7.8b
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: 8000
+          CONFIG__FALLBACK_MODELS: "[]"
+          CONFIG__LOG_LEVEL: DEBUG
+          GITHUB__USER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $envs = @(
-            "OLLAMA__API_BASE=http://host.docker.internal:11434",
-            "CONFIG__ACTIVE_PROVIDER=ollama",
-            "CONFIG__MODEL=ollama/exaone3.5:7.8b",
-            "CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000",
-            "CONFIG__FALLBACK_MODELS=[]",
-            "CONFIG__LOG_LEVEL=DEBUG",
-            "CONFIG__RESPONSE_LANGUAGE=ko-KR",
-            "PR_REVIEWER__LANGUAGE=ko",
-            "GITHUB__USER_TOKEN=${{ secrets.GITHUB_TOKEN }}"
-          )
-      
           $args = @("run","--rm")
+          $envs = @(
+            "OLLAMA__API_BASE=$($Env:OLLAMA__API_BASE)",
+            "CONFIG__ACTIVE_PROVIDER=$($Env:CONFIG__ACTIVE_PROVIDER)",
+            "CONFIG__MODEL=$($Env:CONFIG__MODEL)",
+            "CONFIG__CUSTOM_MODEL_MAX_TOKENS=$($Env:CONFIG__CUSTOM_MODEL_MAX_TOKENS)",
+            "CONFIG__FALLBACK_MODELS=$($Env:CONFIG__FALLBACK_MODELS)",
+            "CONFIG__RESPONSE_LANGUAGE=$($Env:CONFIG__RESPONSE_LANGUAGE)",
+            "PR_REVIEWER__LANGUAGE=$($Env:PR_REVIEWER__LANGUAGE)",
+            "CONFIG__LOG_LEVEL=$($Env:CONFIG__LOG_LEVEL)",
+            "GITHUB__USER_TOKEN=$($Env:GITHUB__USER_TOKEN)"
+          )
           foreach ($e in $envs) { $args += @("-e",$e) }
-          $args += @("codiumai/pr-agent:latest","--pr_url","$Env:PR_URL","review")
-      
+          $args += @("codiumai/pr-agent:latest","--pr_url","$Env:PR_URL","$Env:PR_AGENT_COMMAND")
           & docker @args
 
 
