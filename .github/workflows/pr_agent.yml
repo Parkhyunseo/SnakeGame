@@ -3,9 +3,9 @@ name: PR-Agent (Windows self-hosted + Ollama EXAONE)
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
-    paths: ['**/*.py']           # C#만 리뷰
+    paths: ['**/*.py']
   issue_comment:
-    types: [created, edited]     # /review, /describe 명령도 받고 싶으면 활성화
+    types: [created, edited]
 
 jobs:
   review:
@@ -13,7 +13,6 @@ jobs:
     defaults:
       run:
         shell: powershell
-
     permissions:
       issues: write
       pull-requests: write
@@ -22,78 +21,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) Docker 네트워크 준비 (ollama <-> pr-agent 서로 이름으로 통신)
-      - name: Prepare Docker network
-        run: |
-          if (-not (docker network ls --format '{{.Name}}' | Select-String -Pattern '^llmnet$')) {
-            docker network create llmnet | Out-Null
-          }
-
-      # 2) Ollama 컨테이너 실행 (없으면 생성/있으면 기동)
-      - name: Ensure Ollama is running
+      # 1) Ollama 컨테이너 기동(컨테이너명이 reviewOllama인 상황 반영)
+      - name: Ensure Ollama (reviewOllama) is running
         run: |
           $running = docker ps --format '{{.Names}}' | Select-String -Pattern '^reviewOllama$'
           if (-not $running) {
             $exists = docker ps -a --format '{{.Names}}' | Select-String -Pattern '^reviewOllama$'
             if (-not $exists) {
               docker run -d --name reviewOllama --restart unless-stopped `
-                --network llmnet -p 11434:11434 `
+                -p 11434:11434 `
                 -e OLLAMA_CONTEXT_LENGTH=8192 `
                 -v ollama_models:/root/.ollama `
                 ollama/ollama:latest | Out-Null
             } else {
               docker start reviewOllama | Out-Null
-              docker network connect llmnet reviewOllama 2>$null
             }
           }
+          # 로컬에서 바로 응답 체크
+          Invoke-RestMethod http://localhost:11434/api/tags -Method GET | Out-Null
 
-      # 3) EXAONE 3.5 모델 풀 + 준비 대기
+      # 2) EXAONE 모델 준비
       - name: Pull EXAONE 3.5 model
         run: |
-          Invoke-RestMethod -Uri http://localhost:11434/api/pull `
-            -Method POST -ContentType 'application/json' `
+          Invoke-RestMethod http://localhost:11434/api/pull -Method POST -ContentType 'application/json' `
             -Body '{"name":"exaone3.5:7.8b"}' | Out-Null
-
           $ok = $false
           for ($i=0; $i -lt 60; $i++) {
             try {
-              $resp = Invoke-RestMethod -Uri http://localhost:11434/api/tags -Method GET
+              $resp = Invoke-RestMethod http://localhost:11434/api/tags -Method GET
               if ($resp.models.name -contains 'exaone3.5:7.8b') { $ok = $true; break }
-            } catch { }
-            Start-Sleep -Seconds 5
+            } catch {}
+            Start-Sleep 5
           }
           if (-not $ok) { throw "exaone3.5:7.8b 모델이 5분 내 준비되지 않았습니다." }
 
-      # 4) PR-Agent 컨테이너를 docker run으로 직접 실행 (리뷰)
+      # 3) 컨테이너에서 '호스트(Ollama) 접근' 스모크 테스트
+      - name: Smoke test (container -> host.docker.internal)
+        run: |
+          docker run --rm curlimages/curl -fsS http://host.docker.internal:11434/api/tags
+
+      # 4) PR-Agent 리뷰 실행 (OpenAI 호환 모드로 Ollama 호출)
       - name: PR-Agent review
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-         docker run --rm --network llmnet `
-           -e OLLAMA__API_BASE=http://host.docker.internal:11434 `
-           -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
-           -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
-           codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
+          docker run --rm `
+            -e OPENAI__API_BASE=http://host.docker.internal:11434/v1 `
+            -e OPENAI__KEY=dummy `
+            -e CONFIG__MODEL=exaone3.5:7.8b `
+            -e CONFIG__ACTIVE_PROVIDER=openai `
+            -e CONFIG__LOG_LEVEL=DEBUG `
+            -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
+            codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
 
-      # 5) (선택) PR 본문 요약도 생성하고 싶다면
+      # 5) (선택) PR 설명도 생성
       - name: PR-Agent describe (optional)
         if: success()
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          docker run --rm --network llmnet `
-            -e OLLAMA__API_BASE=http://ollama:11434 `
-            -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
+          docker run --rm `
+            -e OPENAI__API_BASE=http://host.docker.internal:11434/v1 `
+            -e OPENAI__KEY=dummy `
+            -e CONFIG__MODEL=exaone3.5:7.8b `
+            -e CONFIG__ACTIVE_PROVIDER=openai `
+            -e CONFIG__LOG_LEVEL=DEBUG `
             -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
             codiumai/pr-agent:latest --pr_url "$Env:PR_URL" describe
-
-      - name: Smoke test (OpenAI-compatible)
-        run: |
-          $body = @{
-            model = "exaone3.5:7.8b"
-            messages = @(@{ role="user"; content="한 줄로 OK라고만 답해." })
-            temperature = 0.1
-          } | ConvertTo-Json -Depth 4
-          Invoke-RestMethod -Uri http://localhost:11434/v1/chat/completions `
-            -Method POST -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 6
-
