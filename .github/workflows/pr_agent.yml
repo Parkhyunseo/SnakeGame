@@ -66,10 +66,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           $envs = @(
-            "OPENAI__API_BASE=http://host.docker.internal:11434/v1",
-            "OPENAI__KEY=dummy",
-            "CONFIG__ACTIVE_PROVIDER=openai",
-            "CONFIG__MODEL=exaone3.5:7.8b",
+            "OLLAMA__API_BASE=http://host.docker.internal:11434",
+            "CONFIG__ACTIVE_PROVIDER=ollama",
+            "CONFIG__MODEL=ollama/exaone3.5:7.8b",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000",
             "CONFIG__FALLBACK_MODELS=[]",
             "CONFIG__LOG_LEVEL=DEBUG",
@@ -90,10 +89,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           $envs = @(
-            "OPENAI__API_BASE=http://host.docker.internal:11434/v1",
-            "OPENAI__KEY=dummy",
-            "CONFIG__ACTIVE_PROVIDER=openai",
-            "CONFIG__MODEL=exaone3.5:7.8b",
+            "OLLAMA__API_BASE=http://host.docker.internal:11434",
+            "CONFIG__ACTIVE_PROVIDER=ollama",
+            "CONFIG__MODEL=ollama/exaone3.5:7.8b",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000",
             "CONFIG__FALLBACK_MODELS=[]",
             "CONFIG__LOG_LEVEL=DEBUG",
