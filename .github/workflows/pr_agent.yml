@@ -1,0 +1,42 @@
+name: PR-Agent (self-hosted + EXAONE)
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - '**/*.cs'
+  issue_comment:
+    types: [created, edited]
+
+jobs:
+  review:
+    runs-on: self-hosted
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sanity check Ollama
+        run: curl -fsS http://localhost:11434/api/tags
+
+      - name: Ensure EXAONE 3.5 model is present
+        run: |
+          curl -fsS -X POST http://localhost:11434/api/pull \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"exaone3.5:7.8b"}'
+          until curl -fsS http://localhost:11434/api/tags | grep -q 'exaone3.5:7.8b'; do sleep 5; done
+
+      - name: Run PR-Agent
+        uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          config.model: "ollama/exaone3.5:7.8b"
+          OLLAMA.API_BASE: "http://localhost:11434"
+
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.pr_actions: '["opened","reopened","ready_for_review","synchronize"]'
