@@ -70,7 +70,7 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
          docker run --rm --network llmnet `
-           -e OLLAMA__API_BASE=http://ollama:11434 `
+           -e OLLAMA__API_BASE=http://host.docker.internal:11434 `
            -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
            -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
            codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
