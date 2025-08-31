@@ -1,7 +1,57 @@
 [config]
-response_language = "ko-KR"   # ← 핵심
+response_language = "ko-KR"  # 모든 출력 기본 한국어. :contentReference[oaicite:2]{index=2}
 
+# ── 리뷰( /review )에 규칙 주입 ───────────────────────────────
 [pr_reviewer]
-language = "ko"               # 보조(있어도 되고 없어도 됨)
+# 인라인 코멘트/개수 등은 필요에 맞게
 review_inline_comments = true
-max_review_comments = 30
+max_review_comments    = 30
+extra_instructions = """
+[회사 리뷰 정책]
+1) PR 제목 규칙: <type>(<scope>): <summary>  예: feat(core): add snake speed option 
+   - 허용 type: feat, fix, refactor, docs, chore, test
+   - scope는 kebab-case
+   - 위 패턴을 벗어나면 '정책 위반' 섹션에 구체 사유를 적고, 제안 제목을 함께 제시하라.
+2) 브랜치 네이밍: <type>/<ticket-id>-<short-desc> (예: feat/SG-123-speed-up)
+   - 위반 시 '정책 위반' 섹션에 표기.
+3) 네이밍 컨벤션(C#):
+   - 클래스/메서드/프로퍼티: PascalCase
+   - 지역변수/매개변수/필드: camelCase
+   - 상수: UPPER_SNAKE_CASE
+4) 리뷰 출력 형식(한국어):
+   - 요약(핵심 위험/품질/성능/보안)
+   - 정책 위반(있으면 목록)
+   - 개선 제안(코드블록 포함, 파일:라인 명시)
+   - 테스트/검증 아이디어
+"""
+
+# ── PR 설명( /describe ) 포맷 주입 ────────────────────────────
+[pr_description]
+extra_instructions = """
+다음 템플릿으로 제목/본문/라벨을 생성/갱신하라.
+제목: <type>(<scope>): <summary>
+본문:
+## 변경 유형
+- type: feat|fix|refactor|docs|chore|test
+- scope: core|ui|infra|...
+## 변경 요약
+## 세부 변경 사항
+## 리스크/호환성(fps, save data 등)
+## 롤백/모니터링
+라벨: ['team/backend','priority/medium'] 만 사용
+"""
+
+# ── 코드 개선( /improve )도 동일 정책으로 ────────────────────
+[pr_code_suggestions]
+extra_instructions = """
+회사 네이밍/포맷을 따른 제안을 우선한다.
+제안은 꼭 'diff-ready' 코드블록으로 제시하라.
+"""
+
+# ── 헬프 문서( /help_docs ) ───────────────────────────────────
+[pr_help_docs]
+# 기본 문서 경로가 /docs 가 아니면 변경
+docs_path = "docs"
+extra_instructions = """
+회사 코드스타일/가이드 문서의 용어를 사용하라.
+"""
