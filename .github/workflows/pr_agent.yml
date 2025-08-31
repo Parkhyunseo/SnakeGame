@@ -69,12 +69,11 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          docker run --rm --network llmnet `
-            -e OPENAI__KEY=dummy `
-            -e OPENAI__API_BASE=http://ollama:11434/v1 `
-            -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
-            -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
-            codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
+         docker run --rm --network llmnet `
+           -e OLLAMA__API_BASE=http://ollama:11434 `
+           -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
+           -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
+           codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
 
       # 5) (선택) PR 본문 요약도 생성하고 싶다면
       - name: PR-Agent describe (optional)
@@ -83,8 +82,18 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           docker run --rm --network llmnet `
-            -e OPENAI__KEY=dummy `
-            -e OPENAI__API_BASE=http://ollama:11434/v1 `
+            -e OLLAMA__API_BASE=http://ollama:11434 `
             -e CONFIG__MODEL=ollama/exaone3.5:7.8b `
             -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
             codiumai/pr-agent:latest --pr_url "$Env:PR_URL" describe
+
+      - name: Smoke test (OpenAI-compatible)
+        run: |
+          $body = @{
+            model = "exaone3.5:7.8b"
+            messages = @(@{ role="user"; content="한 줄로 OK라고만 답해." })
+            temperature = 0.1
+          } | ConvertTo-Json -Depth 4
+          Invoke-RestMethod -Uri http://localhost:11434/v1/chat/completions `
+            -Method POST -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 6
+
