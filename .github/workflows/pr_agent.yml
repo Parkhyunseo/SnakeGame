@@ -72,6 +72,8 @@ jobs:
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000",
             "CONFIG__FALLBACK_MODELS=[]",
             "CONFIG__LOG_LEVEL=DEBUG",
+            "CONFIG__RESPONSE_LANGUAGE=ko-KR",
+            "PR_REVIEWER__LANGUAGE=ko",
             "GITHUB__USER_TOKEN=${{ secrets.GITHUB_TOKEN }}"
           )
       
@@ -95,6 +97,8 @@ jobs:
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000",
             "CONFIG__FALLBACK_MODELS=[]",
             "CONFIG__LOG_LEVEL=DEBUG",
+            "CONFIG__RESPONSE_LANGUAGE=ko-KR",
+            "PR_REVIEWER__LANGUAGE=ko",
             "GITHUB__USER_TOKEN=${{ secrets.GITHUB_TOKEN }}"
           )
           $args = @("run","--rm")
