@@ -1,0 +1,7 @@
+[config]
+response_language = "ko-KR"   # ← 핵심
+
+[pr_reviewer]
+language = "ko"               # 보조(있어도 되고 없어도 됨)
+review_inline_comments = true
+max_review_comments = 30
