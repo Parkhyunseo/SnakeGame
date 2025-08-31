@@ -32,18 +32,22 @@ jobs:
           PR_NUM_CM:   ${{ github.event.issue.number }}
           CMDBODY:     ${{ github.event.comment.body }}
         run: |
-          # PR 번호/URL 구성
-          $prNum = if ($Env:EVT -eq 'pull_request') { $Env:PR_NUM_PR } else { $Env:PR_NUM_CM }
-          if (-not $prNum) { throw "PR number not found for event $($Env:EVT)" }
-          "PR_NUMBER=$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PR_URL=https://github.com/$($Env:REPO)/pull/$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          # 기본값: PR 이벤트면 review, 코멘트 이벤트면 스킵(명령만 통과)
-          $cmd = if ($Env:EVT -eq 'pull_request') { 'review' } else { 'skip' }
+          # PR 번호/URL
+          $repo = "$Env:REPO"
+          $evt  = "$Env:EVT"
+          $prNum = if ($evt -eq 'pull_request') { $Env:PR_NUM_PR } else { $Env:PR_NUM_CM }
+          if ([string]::IsNullOrEmpty($prNum)) { throw "PR number not found for event $evt" }
+          "PR_NUMBER=$prNum"           | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PR_URL=https://github.com/$repo/pull/$prNum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # 기본값: PR 이벤트면 review, 코멘트 이벤트면 'skip'
+          $cmd = if ($evt -eq 'pull_request') { 'review' } else { 'skip' }
           $arg = $null
-
-          if ($Env:EVT -eq 'issue_comment') {
-            $body = ($Env:CMDBODY ?? '') -replace "`r","" -replace "`n"," "
+          
+          if ($evt -eq 'issue_comment') {
+            # PowerShell 5 호환: ?? 대신 null 체크로 처리
+            $body = $Env:CMDBODY
+            if ($null -eq $body) { $body = "" }
+            $body = $body -replace "`r","" -replace "`n"," "
             $body = $body.Trim()
 
             if ($body -match '^\s*/([a-zA-Z_]+)\s*(.*)$') {
@@ -51,24 +55,40 @@ jobs:
               $rest   = $matches[2].Trim()
 
               switch ($cmdRaw) {
-                'review'           { $cmd = 'review' }
-                'describe'         { $cmd = 'describe' }
-                'description'      { $cmd = 'describe' }        # ← 별칭 지원
-                'improve'          { $cmd = 'improve' }         # 코드 개선
-                'ask'              { $cmd = 'ask';            $arg = $rest.Trim('"') }
-                'update_changelog' { $cmd = 'update_changelog' }
-                'help_docs'        { $cmd = 'help_docs';      $arg = $rest.Trim('"') }
-                default            { $cmd = 'skip' }
+                'review'            { $cmd = 'review' }
+                'describe'          { $cmd = 'describe' }
+                'description'       { $cmd = 'describe' }  # 별칭
+                'improve'           { $cmd = 'improve' }
+                'ask'               {
+                                       $cmd = 'ask'
+                                       $arg = $rest
+                                       if ($arg.StartsWith('"') -and $arg.EndsWith('"')) {
+                                         $arg = $arg.Substring(1, $arg.Length - 2)
+                                       }
+                                     }
+                'update_changelog'  { $cmd = 'update_changelog' }
+                'help_docs'         {
+                                       $cmd = 'help_docs'
+                                       $arg = $rest
+                                       if ($arg.StartsWith('"') -and $arg.EndsWith('"')) {
+                                         $arg = $arg.Substring(1, $arg.Length - 2)
+                                       }
+                                     }
+                default             { $cmd = 'skip' }
               }
             }
           }
 
           "PR_AGENT_COMMAND=$cmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          if ($arg) { "PR_AGENT_ARG=$arg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
+          if ($null -ne $arg -and $arg -ne "") {
+            "PR_AGENT_ARG=$arg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
           Write-Host "Resolved PR_URL=$($env:PR_URL)"
           Write-Host "Resolved PR_AGENT_COMMAND=$cmd"
-          if ($arg) { Write-Host "Resolved PR_AGENT_ARG=$arg" }
+          if ($null -ne $arg -and $arg -ne "") {
+            Write-Host "Resolved PR_AGENT_ARG=$arg"
+          }
 
       # 1) Ollama 확인 + EXAONE 준비 (이미 있으면 빠르게 통과)
       - name: Ensure Ollama (reviewOllama) is running
