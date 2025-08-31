@@ -3,7 +3,6 @@ name: PR-Agent (Windows self-hosted + Ollama EXAONE)
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
-    paths: ['**/*.py']
   issue_comment:
     types: [created, edited]
 
