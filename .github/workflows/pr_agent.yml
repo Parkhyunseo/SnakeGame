@@ -9,10 +9,10 @@ on:
 
 jobs:
   review:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows]
     defaults:
       run:
-        shell: pwsh
+        shell: powershell
     permissions:
       issues: write
       pull-requests: write
@@ -23,14 +23,13 @@ jobs:
 
       - name: Sanity check Ollama
         run: |
-          curl.exe -fsS http://localhost:11434/api/tags
-
+          Invoke-RestMethod -Uri http://localhost:11434/api/tags -Method GET | ConvertTo-Json -Depth 5
+      
       - name: Ensure EXAONE 3.5 model is present
         run: |
           Invoke-RestMethod -Uri http://localhost:11434/api/pull `
             -Method POST -ContentType 'application/json' `
             -Body '{"name":"exaone3.5:7.8b"}'
-
           $ok = $false
           for ($i=0; $i -lt 60; $i++) {
             try {
@@ -40,6 +39,7 @@ jobs:
             Start-Sleep -Seconds 5
           }
           if (-not $ok) { throw "exaone3.5:7.8b 모델이 5분 내 준비되지 않았습니다." }
+
 
       - name: Run PR-Agent
         uses: qodo-ai/pr-agent@main
