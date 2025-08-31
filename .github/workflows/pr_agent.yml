@@ -68,11 +68,14 @@ jobs:
           docker run --rm `
             -e OPENAI__API_BASE=http://host.docker.internal:11434/v1 `
             -e OPENAI__KEY=dummy `
-            -e CONFIG__MODEL=exaone3.5:7.8b `
             -e CONFIG__ACTIVE_PROVIDER=openai `
+            -e CONFIG__MODEL=exaone3.5:7.8b `
+            -e CONFIG__CUSTOM_MODEL_MAX_TOKENS=8000 `   # ★ 추가: EXAONE 컨텍스트(8k) 기준
+            -e CONFIG__FALLBACK_MODELS='[]' `           # ★ 추가: o4-mini로 안떨어지게
             -e CONFIG__LOG_LEVEL=DEBUG `
             -e GITHUB__USER_TOKEN='${{ secrets.GITHUB_TOKEN }}' `
             codiumai/pr-agent:latest --pr_url "$Env:PR_URL" review
+
 
       # 5) (선택) PR 설명도 생성
       - name: PR-Agent describe (optional)
